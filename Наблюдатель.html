@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Наблюдатель</title>
+<style>
+:root{color-scheme:dark;--bg:#000;--fg:#d8ecff}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;touch-action:none}
+canvas{display:block;width:100%;height:100%}
+#msg{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 40px);text-align:center;color:var(--fg);font:300 19px/1.5 Georgia,'Times New Roman',serif;letter-spacing:.04em;pointer-events:none;padding:0 24px;transition:opacity 2s}
+#msg small{display:block;font-size:14px;opacity:.6;margin-top:6px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="msg">Он следит за тобой<small>води пальцем · коснись и держи — зрачок раскроется, а потом нырнёшь внутрь</small></div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),msg=document.getElementById('msg');
+let W,H,DPR,R;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;R=Math.min(W*.23,H*.22);ctx.setTransform(DPR,0,0,DPR,0,0);ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);}
+addEventListener('resize',resize);resize();
+const rnd=Math.random,clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x)),lerp=(a,b,k)=>a+(b-a)*k;
+
+const iris=Array.from({length:2400},()=>{const r=Math.pow(rnd(),.8);return{a:rnd()*6.283,r,sp:(.1+rnd()*.25)*(rnd()<.5?1:-.3),hue:lerp(38,195,r)+rnd()*25,s:.8+rnd()*1.8,al:.35+rnd()*.5};});
+const dust=Array.from({length:260},()=>({x:(rnd()*2-1)*1.9,y:(rnd()*2-1)*1.1,v:(rnd()-.5)*.02,al:.1+rnd()*.25}));
+const stars=Array.from({length:90},()=>({a:rnd()*6.283,r:Math.sqrt(rnd()),ph:rnd()*6.28,h:200+rnd()*120}));
+
+const tun=Array.from({length:450},()=>({a:rnd()*6.283,r:.05+rnd()*1.1,z:.05+rnd()*.95,h:190+rnd()*140}));
+const ease=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
+let dive=0,ptr=null,hold=false,gx=0,gy=0,dil=0,open=0,blink=0,nextBlink=3,t=0,last=performance.now();
+addEventListener('pointermove',e=>{ptr={x:e.clientX,y:e.clientY};});
+addEventListener('pointerdown',e=>{ptr={x:e.clientX,y:e.clientY};hold=true;if(blink<=0)blink=.001;});
+addEventListener('pointerup',()=>{hold=false;});
+addEventListener('pointercancel',()=>{hold=false;});
+
+function lidPath(a,h){ctx.beginPath();ctx.moveTo(-a,0);ctx.quadraticCurveTo(0,-2*h,a,0);ctx.quadraticCurveTo(0,2*h,-a,0);ctx.closePath();}
+
+function frame(now){
+  const dt=Math.min((now-last)/1000,.05);last=now;t+=dt;
+  dive=clamp(dive+(hold?.22:-.6)*dt);
+  if(blink>0){blink+=dt/.38;if(blink>=1)blink=0;}
+  else if(t>nextBlink){blink=.001;nextBlink=t+3+rnd()*4;}
+  const bl=(blink>0?Math.sin(Math.PI*blink):0)*(1-clamp(dive*10));
+  open=lerp(open,clamp((t-.4)/2),.1);
+  const op=open*(1-.96*bl);
+  dil=lerp(dil,hold?1:0,hold?.05:.08);
+  const pr=lerp(.27,.64,dil)+.015*Math.sin(t*2);
+
+  // gaze
+  const cx=W/2,cy=H/2;
+  let tx,ty;
+  if(ptr){tx=ptr.x-cx;ty=ptr.y-cy;}else{tx=Math.sin(t*.7)*R;ty=Math.cos(t*.5)*R*.4;}
+  const m=Math.hypot(tx,ty),lim=R*.6;if(m>lim){tx*=lim/m;ty*=lim/m;}
+  gx=lerp(gx,tx,.12);gy=lerp(gy,ty*.55,.12);
+
+  // trails
+  ctx.setTransform(DPR,0,0,DPR,0,0);ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='rgba(0,0,0,.22)';ctx.fillRect(0,0,W,H);
+  ctx.translate(cx,cy);const Z=Math.exp(ease(dive)*Math.log(45)),kk=clamp(dive*2);ctx.scale(Z,Z);ctx.translate(-gx*1.12*kk,-gy*1.12*kk);
+
+  const a=R*1.95,h=R*1.05*Math.max(op,.003);
+  ctx.save();lidPath(a,h);ctx.clip();
+  ctx.globalCompositeOperation='lighter';
+
+  // sclera dust
+  for(const d of dust){d.x+=d.v*dt;if(d.x>1.9)d.x=-1.9;if(d.x<-1.9)d.x=1.9;
+    ctx.fillStyle=`rgba(190,215,255,${d.al})`;ctx.fillRect(d.x*R,d.y*R,1.4,1.4);}
+
+  // iris particles
+  const ix=gx,iy=gy;
+  for(const p of iris){
+    p.a+=p.sp*dt*(1.4-p.r);
+    const rr=R*(pr+p.r*(1-pr)*.98)*(1+.01*Math.sin(t*3+p.a*3));
+    const x=ix+Math.cos(p.a)*rr,y=iy+Math.sin(p.a)*rr;
+    ctx.fillStyle=`hsla(${p.hue},95%,${55+dil*10}%,${p.al*(.75+.5*dil)})`;
+    ctx.fillRect(x,y,p.s,p.s);
+  }
+  // limbal glow ring
+  ctx.strokeStyle=`hsla(190,100%,60%,.28)`;ctx.lineWidth=3;ctx.beginPath();ctx.arc(ix,iy,R,0,6.283);ctx.stroke();
+
+  // pupil (a bit more shifted, for depth)
+  const px=ix*1.12,py=iy*1.12,P=R*pr;
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='#000';ctx.beginPath();ctx.arc(px,py,P,0,6.283);ctx.fill();
+  // galaxy inside the pupil when dilated
+  if(dil>.02&&dive<.6){
+    ctx.save();ctx.beginPath();ctx.arc(px,py,P*.98,0,6.283);ctx.clip();
+    const g=ctx.createRadialGradient(px,py,0,px,py,P);
+    g.addColorStop(0,`rgba(160,100,255,${.5*dil})`);g.addColorStop(.6,`rgba(60,20,140,${.25*dil})`);g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g;ctx.fillRect(px-P,py-P,P*2,P*2);
+    ctx.globalCompositeOperation='lighter';
+    for(const s of stars){
+      const ang=s.a+t*.25*(1.2-s.r),rr=s.r*P;
+      ctx.fillStyle=`hsla(${s.h},90%,80%,${dil*(.4+.6*Math.abs(Math.sin(t*2+s.ph)))})`;
+      ctx.fillRect(px+Math.cos(ang)*rr,py+Math.sin(ang)*rr,1.6,1.6);
+    }
+    ctx.restore();
+  }
+  // glint
+  ctx.globalCompositeOperation='lighter';
+  ctx.fillStyle='rgba(255,255,255,.8)';ctx.beginPath();ctx.ellipse(ix*.5-R*.35,iy*.5-R*.4,R*.1,R*.06,-.6,0,6.283);ctx.fill();
+  ctx.restore();
+
+  if(dive>.12){
+    ctx.save();ctx.setTransform(DPR,0,0,DPR,cx*DPR,cy*DPR);
+    const Ps=R*pr*Z,sx=(gx*1.12-gx*1.12*kk)*Z,sy=(gy*1.12-gy*1.12*kk)*Z,ta=clamp((dive-.12)*2.5);
+    ctx.beginPath();ctx.arc(sx,sy,Ps,0,6.283);ctx.clip();
+    ctx.globalAlpha=ta;ctx.fillStyle='#02000a';ctx.fillRect(sx-Ps,sy-Ps,Ps*2,Ps*2);
+    const ng=ctx.createRadialGradient(sx,sy,0,sx,sy,Ps);
+    ng.addColorStop(0,'rgba(150,90,255,.75)');ng.addColorStop(.5,'rgba(70,30,160,.4)');ng.addColorStop(1,'rgba(0,0,10,0)');
+    ctx.fillStyle=ng;ctx.fillRect(sx-Ps,sy-Ps,Ps*2,Ps*2);
+    ctx.globalCompositeOperation='lighter';
+    const sp=.12+dive*1.3;
+    for(const s of tun){
+      s.z-=dt*sp;if(s.z<=.03){s.z=1;s.a=rnd()*6.283;s.r=.05+rnd()*1.1;}
+      const k=Ps*.5,z1=s.z+sp*.05+.01,c=Math.cos(s.a)*s.r,n=Math.sin(s.a)*s.r;
+      ctx.strokeStyle=`hsla(${s.h},90%,${70+20*(1-s.z)}%,${clamp(1.2-s.z)})`;
+      ctx.lineWidth=Math.min(Ps*.02,Ps*.003/s.z)+.6;
+      ctx.beginPath();ctx.moveTo(sx+c*k/z1,sy+n*k/z1);ctx.lineTo(sx+c*k/s.z,sy+n*k/s.z);ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha=clamp(1-dive*4);
+  // lid outline glow
+  ctx.globalCompositeOperation='lighter';
+  lidPath(a,h);
+  ctx.strokeStyle='rgba(90,180,255,.10)';ctx.lineWidth=12;ctx.stroke();
+  ctx.strokeStyle='rgba(120,210,255,.30)';ctx.lineWidth=4;ctx.stroke();
+  ctx.strokeStyle='rgba(220,245,255,.9)';ctx.lineWidth=1.4;ctx.stroke();
+
+  ctx.globalAlpha=1;msg.style.opacity=t>9?0:1;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
